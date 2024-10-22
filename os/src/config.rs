@@ -1,4 +1,5 @@
 //! Constants in the kernel
+//! 用来存放内核中所有的常数
 
 #[allow(unused)]
 

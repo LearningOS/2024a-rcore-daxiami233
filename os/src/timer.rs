@@ -30,6 +30,7 @@ pub fn get_time_us() -> usize {
 }
 
 /// Set the next timer interrupt
+/// 设置下一次中断时间
 pub fn set_next_trigger() {
     set_timer(get_time() + CLOCK_FREQ / TICKS_PER_SEC);
 }

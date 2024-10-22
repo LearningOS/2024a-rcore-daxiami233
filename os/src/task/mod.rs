@@ -14,9 +14,10 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -54,8 +55,13 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_times: [0; MAX_SYSCALL_NUM],
+            start_time: 0
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
+            // 初始化每个程序，将应用初始信息压入各自的内核栈，然后执行__restore初始化TaskControlBlock
+            // init_app_cx(i): save TrapContext in kernel stack
+            // 将__restore的地址作为返回地址放入TaskContext
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
         }
@@ -80,6 +86,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let task0 = &mut inner.tasks[0];
         task0.task_status = TaskStatus::Running;
+        task0.start_time = get_time_ms();
         let next_task_cx_ptr = &task0.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -102,6 +109,11 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let current = inner.current_task;
         inner.tasks[current].task_status = TaskStatus::Exited;
+        // println!("SYSCALL_WRITE: {}", inner.tasks[current].syscall_times[64]);
+        // println!("SYSCALL_EXIT: {}", inner.tasks[current].syscall_times[93]);
+        // println!("SYSCALL_YIELD: {}", inner.tasks[current].syscall_times[124]);
+        // println!("SYSCALL_GET_TIME: {}", inner.tasks[current].syscall_times[169]);
+        // println!("SYSCALL_TASK_INFO: {}", inner.tasks[current].syscall_times[410]);
     }
 
     /// Find next task to run and return task id.
@@ -123,6 +135,9 @@ impl TaskManager {
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
+            if inner.tasks[next].start_time == 0 {
+                inner.tasks[next].start_time = get_time_ms();
+            }
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
             drop(inner);
@@ -135,6 +150,28 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// 该函数用于将当前执行的syscall数加1
+    fn syscall_record(&self, id: usize){
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[id] += 1;
+    }
+
+    /// 获取开始时间
+    fn get_start_time(&self) -> usize{
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].start_time
+    }
+
+    /// 获取系统调用次数
+    fn get_syscall_times(&self) -> [u32; 500]{
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times.clone()
+    }
+
 }
 
 /// Run the first task in task list.
@@ -168,4 +205,14 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// 该函数用于将当前执行的syscall数加1
+pub fn syscall_record(id: usize){
+    TASK_MANAGER.syscall_record(id);
+}
+
+/// 该函数用于返回系统调用次数和开始时间
+pub fn get_taskinfo() -> ([u32; 500], usize){
+    (TASK_MANAGER.get_syscall_times(), TASK_MANAGER.get_start_time())
 }

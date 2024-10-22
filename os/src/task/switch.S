@@ -12,7 +12,9 @@ __switch:
     #     current_task_cx_ptr: *mut TaskContext,
     #     next_task_cx_ptr: *const TaskContext
     # )
+    # 将要保存的值放在a0中，从a1中获取要重新加载的值
     # save kernel stack of current task
+    # 将栈指针 sp 保存到 a0 指向的地址偏移 8 个字节的位置，sp指向当前任务的栈顶
     sd sp, 8(a0)
     # save ra & s0~s11 of current execution
     sd ra, 0(a0)

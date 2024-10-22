@@ -24,9 +24,9 @@ impl TrapContext {
         let mut cx = Self {
             x: [0; 32],
             sstatus,
-            sepc: entry, // entry point of app
+            sepc: entry, // 程序i的首地址
         };
-        cx.set_sp(sp); // app's user stack pointer
+        cx.set_sp(sp); // app's user stack pointer, _store后sp的位置位于user stack
         cx // return initial Trap Context of app
     }
 }
