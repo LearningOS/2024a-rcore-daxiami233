@@ -100,6 +100,15 @@ pub fn rust_main() -> ! {
     clear_bss();
     kernel_log_info();
     mm::init();
+    // use alloc::boxed::Box;
+    // let a = Box::new(5);
+    // extern "C"{
+    //     fn sbss();
+    //     fn ebss();
+    // }
+    // let range = sbss as usize .. ebss as usize;
+    // assert!(range.contains(&(a.as_ref() as *const _ as usize)));
+    // crate::mm::frame_allocator_test();
     println!("[kernel] back to world!");
     mm::remap_test();
     trap::init();

@@ -1,6 +1,6 @@
 //! Types related to task management
 use super::TaskContext;
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
 use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
@@ -28,6 +28,12 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// 各系统调用的使用次数
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    /// 应用程序开始执行的时间
+    pub start_time: usize
 }
 
 impl TaskControlBlock {
@@ -40,9 +46,11 @@ impl TaskControlBlock {
         self.memory_set.token()
     }
     /// Based on the elf info in program, build the contents of task in a new address space
+    /// 读取应用数据，建立应用内核栈并插入TaskContext，插入TrapContext
     pub fn new(elf_data: &[u8], app_id: usize) -> Self {
         // memory_set with elf program headers/trampoline/trap context/user stack
         let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
+        // 获得trap物理地址
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
             .unwrap()
@@ -50,6 +58,7 @@ impl TaskControlBlock {
         let task_status = TaskStatus::Ready;
         // map a kernel-stack in kernel space
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(app_id);
+        // 在内核中开辟应用内核栈
         KERNEL_SPACE.exclusive_access().insert_framed_area(
             kernel_stack_bottom.into(),
             kernel_stack_top.into(),
@@ -63,6 +72,9 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_times: [0; MAX_SYSCALL_NUM],
+            start_time: 0
+
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();

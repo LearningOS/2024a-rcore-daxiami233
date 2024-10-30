@@ -10,14 +10,14 @@ use lazy_static::*;
 
 /// tracker for physical page frame allocation and deallocation
 pub struct FrameTracker {
-    /// physical page number
+    /// 物理页号
     pub ppn: PhysPageNum,
 }
 
 impl FrameTracker {
     /// Create a new FrameTracker
     pub fn new(ppn: PhysPageNum) -> Self {
-        // page cleaning
+        // 页数据清空
         let bytes_array = ppn.get_bytes_array();
         for i in bytes_array {
             *i = 0;
@@ -32,6 +32,7 @@ impl Debug for FrameTracker {
     }
 }
 
+/// 生命周期结束后自动释放
 impl Drop for FrameTracker {
     fn drop(&mut self) {
         frame_dealloc(self.ppn);

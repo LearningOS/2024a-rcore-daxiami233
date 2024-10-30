@@ -36,6 +36,7 @@ pub fn init() {
 
 fn set_kernel_trap_entry() {
     unsafe {
+        // S态陷阱向量基址寄存器。它用于指定当异常或中断发生时，控制流转移的目标地址
         stvec::write(trap_from_kernel as usize, TrapMode::Direct);
     }
 }
@@ -58,6 +59,7 @@ pub fn enable_timer_interrupt() {
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
     let cx = current_trap_cx();
+    // 硬件会自动将scause寄存器的值设置为异常或中断的编码
     let scause = scause::read(); // get trap cause
     let stval = stval::read(); // get extra value
     // trace!("into {:?}", scause.cause());

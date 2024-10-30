@@ -13,9 +13,10 @@ mod context;
 mod switch;
 #[allow(clippy::module_inception)]
 mod task;
-
+use crate::mm::*;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -79,6 +80,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
+        next_task.start_time = get_time_ms();
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -141,8 +143,11 @@ impl TaskManager {
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
+            if inner.tasks[next].start_time == 0 {
+                inner.tasks[next].start_time = get_time_ms();
+            }
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
-            let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
+            let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;   
             drop(inner);
             // before this, we should drop local variables that must be dropped manually
             unsafe {
@@ -153,6 +158,69 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    fn syscall_record(&self, id: usize){
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[id] += 1;
+    }
+
+    /// 获取开始时间
+    fn get_start_time(&self) -> usize{
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].start_time
+    }
+
+    /// 获取系统调用次数
+    fn get_syscall_times(&self) -> [u32; 500]{
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times.clone()
+    }
+
+    
+    fn mmap(&self, start: usize, len: usize, prot: usize)->isize{
+        if (prot & 0x7 == 0) || (prot & !0x7 != 0) {
+            return -1
+        }
+        let mut right = MapPermission::U;
+        if prot & 0x1 == 0x1 {right = right | MapPermission::R;}
+        if prot & 0x2 == 0x2 {right = right | MapPermission::W;}
+        if prot & 0x4 == 0x4 {right = right | MapPermission::X;}
+        let mut inner = self.inner.exclusive_access();
+        let current_task = inner.current_task;
+        let memory_set = &mut (inner.tasks[current_task].memory_set);
+        let start_va = VirtAddr::from(start);
+        let end_va = VirtAddr::from(start+len);
+        
+        if memory_set.check_used(start_va, end_va) {
+            return -1;
+        } 
+        if start_va.0 & 0xfff != 0{
+            return -1;
+        }
+        memory_set.insert_framed_area(start_va, 
+            end_va, right);
+        0
+    }
+
+    fn munmap(&self, start: usize, len: usize)->isize{
+        let mut inner = self.inner.exclusive_access();
+        let current_task = inner.current_task;
+        let memory_set = &mut (inner.tasks[current_task].memory_set);
+        let start_va = VirtAddr::from(start);
+        let end_va = VirtAddr::from(start+len);
+        if memory_set.check_unused(start_va, end_va) {
+            return -1;
+        }
+        if start_va.0 & 0xfff != 0{
+            return -1;
+        }
+        memory_set.delete_area(start_va, end_va);
+        0
+    }
+
 }
 
 /// Run the first task in task list.
@@ -201,4 +269,25 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+
+/// 该函数用于将当前执行的syscall数加1
+pub fn syscall_record(id: usize){
+    TASK_MANAGER.syscall_record(id);
+}
+
+/// 该函数用于返回系统调用次数和开始时间
+pub fn get_taskinfo() -> ([u32; 500], usize){
+    (TASK_MANAGER.get_syscall_times(), TASK_MANAGER.get_start_time())
+}
+
+/// 该函数用于开辟文件空间
+pub fn mmap(start: usize, len: usize, prot: usize)->isize{
+    TASK_MANAGER.mmap(start, len, prot)
+}
+
+/// 该函数用于释放文件空间
+pub fn munmap(start: usize, len: usize) -> isize {
+    TASK_MANAGER.munmap(start, len)
 }

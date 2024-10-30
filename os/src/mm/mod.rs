@@ -17,12 +17,16 @@ use address::{StepByOne, VPNRange};
 pub use frame_allocator::{frame_alloc, FrameTracker};
 pub use memory_set::remap_test;
 pub use memory_set::{kernel_stack_position, MapPermission, MemorySet, KERNEL_SPACE};
-pub use page_table::{translated_byte_buffer, PageTableEntry};
+pub use page_table::{translated_byte_buffer, PageTableEntry, translated_vaddr, check_va_used};
 use page_table::{PTEFlags, PageTable};
+
+pub use frame_allocator::frame_allocator_test;
 
 /// initiate heap allocator, frame allocator and kernel space
 pub fn init() {
+    // 初始化堆区
     heap_allocator::init_heap();
+    // 初始化物理帧分配器
     frame_allocator::init_frame_allocator();
     KERNEL_SPACE.exclusive_access().activate();
 }

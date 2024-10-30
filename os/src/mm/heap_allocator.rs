@@ -4,6 +4,7 @@ use buddy_system_allocator::LockedHeap;
 
 #[global_allocator]
 /// heap allocator instance
+/// LockedHeap 已经实现了 GlobalAlloc
 static HEAP_ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 #[alloc_error_handler]
@@ -12,6 +13,7 @@ pub fn handle_alloc_error(layout: core::alloc::Layout) -> ! {
     panic!("Heap allocation error, layout = {:?}", layout);
 }
 /// heap space ([u8; KERNEL_HEAP_SIZE])
+/// 编译器会将这种零初始化的全局变量放在.bss段。
 static mut HEAP_SPACE: [u8; KERNEL_HEAP_SIZE] = [0; KERNEL_HEAP_SIZE];
 /// initiate heap allocator
 pub fn init_heap() {
@@ -23,6 +25,7 @@ pub fn init_heap() {
 }
 
 #[allow(unused)]
+/// heap test
 pub fn heap_test() {
     use alloc::boxed::Box;
     use alloc::vec::Vec;

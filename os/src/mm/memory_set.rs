@@ -1,6 +1,6 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
-use super::{frame_alloc, FrameTracker};
+use super::{frame_alloc, FrameTracker, check_va_used};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
@@ -34,6 +34,7 @@ lazy_static! {
         Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
 }
 /// address space
+/// 地址空间
 pub struct MemorySet {
     page_table: PageTable,
     areas: Vec<MapArea>,
@@ -58,11 +59,27 @@ impl MemorySet {
         end_va: VirtAddr,
         permission: MapPermission,
     ) {
+        // println!("{:#x}",start_va.0);
+        // println!("{:#x}",end_va.0);
         self.push(
             MapArea::new(start_va, end_va, MapType::Framed, permission),
             None,
         );
     }
+    
+    /// 删除一块区域
+    pub fn delete_area(&mut self, start_va: VirtAddr, _end_va: VirtAddr){
+        let start_vpn: VirtPageNum = start_va.floor();
+        // let end_vpn: VirtPageNum = end_va.ceil();
+        // let vpn_range = VPNRange::new(start_vpn, end_vpn);
+        for map_area in &mut self.areas {
+            if map_area.vpn_range.get_start().0 == start_vpn.0 {
+                map_area.unmap(&mut self.page_table);
+            }
+        }
+    }
+    
+    // 插入一个逻辑段
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -262,8 +279,40 @@ impl MemorySet {
             false
         }
     }
+
+    /// 检查要插入的区域是否使用过
+    pub fn check_used(&self, start_va: VirtAddr, end_va: VirtAddr)->bool{
+        let start_vpn: VirtPageNum = start_va.floor();
+        let end_vpn: VirtPageNum = end_va.ceil();
+        // println!("{:#x},{:#x}", start_vpn.0, end_vpn.0);
+        let vpn_range = VPNRange::new(start_vpn, end_vpn);
+        for vpn in vpn_range {
+            // println!("{:#x},{}", vpn.0, check_va_used(self.token(), vpn));
+            if check_va_used(self.token(), vpn) == 1 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 检查要删除的区域是否为空
+    pub fn check_unused(&self, start_va: VirtAddr, end_va: VirtAddr)->bool{
+        let start_vpn: VirtPageNum = start_va.floor();
+        let end_vpn: VirtPageNum = end_va.ceil();
+        // println!("{:#x},{:#x}", start_vpn.0, end_vpn.0);
+        let vpn_range = VPNRange::new(start_vpn, end_vpn);
+        for vpn in vpn_range {
+            // println!("{:#x},{}", vpn.0, check_va_used(self.token(), vpn));
+            if check_va_used(self.token(), vpn) == 0 {
+                return true;
+            }
+        }
+        false
+    }
+
 }
 /// map area structure, controls a contiguous piece of virtual memory
+/// 逻辑段
 pub struct MapArea {
     vpn_range: VPNRange,
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
@@ -280,6 +329,7 @@ impl MapArea {
     ) -> Self {
         let start_vpn: VirtPageNum = start_va.floor();
         let end_vpn: VirtPageNum = end_va.ceil();
+        // end_vpn.delete();
         Self {
             vpn_range: VPNRange::new(start_vpn, end_vpn),
             data_frames: BTreeMap::new(),
@@ -311,6 +361,7 @@ impl MapArea {
     }
     pub fn map(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
+            // println!("---{:#x}---", vpn.0);
             self.map_one(page_table, vpn);
         }
     }
