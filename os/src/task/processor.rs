@@ -8,9 +8,11 @@ use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
+use crate::mm::*;
 
 /// Processor management structure
 pub struct Processor {
@@ -37,12 +39,64 @@ impl Processor {
 
     ///Get current task in moving semanteme
     pub fn take_current(&mut self) -> Option<Arc<TaskControlBlock>> {
+        // 完全获取所有权
         self.current.take()
     }
 
     ///Get current task in cloning semanteme
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
+        // 克隆引用指针
         self.current.as_ref().map(Arc::clone)
+    }
+
+    /// 获取开始时间
+    pub fn get_start_time(&self) -> usize{
+        self.current().unwrap().inner_exclusive_access().start_time
+    }
+
+     /// 获取系统调用次数
+    pub fn get_syscall_times(&self) -> [u32; 500]{
+        self.current().unwrap().inner_exclusive_access().syscall_times
+    }
+
+    fn mmap(&self, start: usize, len: usize, prot: usize)->isize{
+        if (prot & 0x7 == 0) || (prot & !0x7 != 0) {
+            return -1
+        }
+        let mut right = MapPermission::U;
+        if prot & 0x1 == 0x1 {right = right | MapPermission::R;}
+        if prot & 0x2 == 0x2 {right = right | MapPermission::W;}
+        if prot & 0x4 == 0x4 {right = right | MapPermission::X;}
+        let current = self.current().unwrap();
+        let mut inner = current.inner_exclusive_access();
+        let memory_set = &mut (inner.memory_set);
+        let start_va = VirtAddr::from(start);
+        let end_va = VirtAddr::from(start+len);
+        
+        if memory_set.check_used(start_va, end_va) {
+            return -1;
+        } 
+        if start_va.0 & 0xfff != 0{
+            return -1;
+        }
+        memory_set.insert_framed_area(start_va, 
+            end_va, right);
+        0
+    }
+    fn munmap(&self, start: usize, len: usize)->isize{
+        let current = self.current().unwrap();
+        let mut inner = current.inner_exclusive_access();
+        let memory_set = &mut (inner.memory_set);
+        let start_va = VirtAddr::from(start);
+        let end_va = VirtAddr::from(start+len);
+        if memory_set.check_unused(start_va, end_va) {
+            return -1;
+        }
+        if start_va.0 & 0xfff != 0{
+            return -1;
+        }
+        memory_set.delete_area(start_va, end_va);
+        0
     }
 }
 
@@ -56,11 +110,16 @@ pub fn run_tasks() {
     loop {
         let mut processor = PROCESSOR.exclusive_access();
         if let Some(task) = fetch_task() {
+            // 现在正在运行的进程的TaskContext
             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
+            // 即将切换的进程的TaskContext
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            if task_inner.start_time == 0 {
+                task_inner.start_time = get_time_ms();
+            }
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -109,3 +168,31 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
 }
+
+
+/// 该函数用于将当前执行的syscall数加1
+pub fn syscall_record(id: usize){
+    PROCESSOR
+        .exclusive_access()
+        .current()
+        .unwrap()
+        .inner_exclusive_access()
+        .syscall_times[id] += 1;
+}
+
+/// 该函数用于返回系统调用次数和开始时间
+pub fn get_taskinfo() -> ([u32; 500], usize){
+    let inner = PROCESSOR.exclusive_access();
+    (inner.get_syscall_times(), inner.get_start_time())
+}
+
+/// 该函数用于开辟文件空间
+pub fn mmap(start: usize, len: usize, prot: usize)->isize{
+    PROCESSOR.exclusive_access().mmap(start, len, prot)
+}
+
+/// 该函数用于释放文件空间
+pub fn munmap(start: usize, len: usize) -> isize {
+    PROCESSOR.exclusive_access().munmap(start, len)
+}
+
