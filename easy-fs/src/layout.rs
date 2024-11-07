@@ -86,6 +86,7 @@ pub struct DiskInode {
     pub indirect1: u32,
     pub indirect2: u32,
     type_: DiskInodeType,
+    pub nlink: u32,
 }
 
 impl DiskInode {
@@ -97,6 +98,7 @@ impl DiskInode {
         self.indirect1 = 0;
         self.indirect2 = 0;
         self.type_ = type_;
+        self.nlink = 1;
     }
     /// Whether this inode is a directory
     pub fn is_dir(&self) -> bool {
@@ -107,7 +109,7 @@ impl DiskInode {
     pub fn is_file(&self) -> bool {
         self.type_ == DiskInodeType::File
     }
-    /// Return block number correspond to size.
+    /// 返回文件数据块的数量（不包括索引块）
     pub fn data_blocks(&self) -> u32 {
         Self::_data_blocks(self.size)
     }
@@ -136,7 +138,7 @@ impl DiskInode {
         assert!(new_size >= self.size);
         Self::total_blocks(new_size) - Self::total_blocks(self.size)
     }
-    /// Get id of block given inner id
+    /// 根据inner_id找到block_id
     pub fn get_block_id(&self, inner_id: u32, block_device: &Arc<dyn BlockDevice>) -> u32 {
         let inner_id = inner_id as usize;
         if inner_id < INODE_DIRECT_COUNT {

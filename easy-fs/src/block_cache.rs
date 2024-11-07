@@ -127,6 +127,7 @@ lazy_static! {
         Mutex::new(BlockCacheManager::new());
 }
 /// Get the block cache corresponding to the given block id and block device
+/// 将磁盘中的block读入内存
 pub fn get_block_cache(
     block_id: usize,
     block_device: Arc<dyn BlockDevice>,

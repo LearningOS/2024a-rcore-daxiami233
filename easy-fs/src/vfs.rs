@@ -7,7 +7,9 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::{Mutex, MutexGuard};
 /// Virtual filesystem layer over easy-fs
+/// Inode => DiskInode
 pub struct Inode {
+    // block_id 和 block_offset 记录该 Inode 对应的 DiskInode 保存在磁盘上的具体位置
     block_id: usize,
     block_offset: usize,
     fs: Arc<Mutex<EasyFileSystem>>,
@@ -29,7 +31,7 @@ impl Inode {
             block_device,
         }
     }
-    /// Call a function over a disk inode to read it
+    /// 读取磁盘中 DiskInode 内容并执行 f 操作
     fn read_disk_inode<V>(&self, f: impl FnOnce(&DiskInode) -> V) -> V {
         get_block_cache(self.block_id, Arc::clone(&self.block_device))
             .lock()
@@ -45,6 +47,7 @@ impl Inode {
     fn find_inode_id(&self, name: &str, disk_inode: &DiskInode) -> Option<u32> {
         // assert it is a directory
         assert!(disk_inode.is_dir());
+        // DIRENT_SZ 目录项大小32Byte
         let file_count = (disk_inode.size as usize) / DIRENT_SZ;
         let mut dirent = DirEntry::empty();
         for i in 0..file_count {
@@ -182,5 +185,79 @@ impl Inode {
             }
         });
         block_cache_sync_all();
+    }
+
+    /// 获取block_id
+    pub fn get_block_id(&self)->usize{
+        self.block_id
+    }
+
+    /// get_nlink
+    pub fn get_nlink(&self)->usize{
+        get_block_cache(self.block_id as usize, Arc::clone(&self.block_device))
+            .lock()
+            .read(self.block_offset, |disk_inode: &DiskInode| {
+                disk_inode.nlink as usize
+            })
+    }
+
+    /// 创建一个硬链接
+    pub fn hard_link(&self, old_name: &str, new_name: &str){
+        let old_inode = self.find(old_name).unwrap();
+        get_block_cache(old_inode.block_id as usize, Arc::clone(&old_inode.block_device))
+            .lock()
+            .modify(old_inode.block_offset, |disk_inode: &mut DiskInode| {
+                disk_inode.nlink += 1;
+            });
+        self.modify_disk_inode(|root_inode| {
+            // append file in the dirent
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            // increase size
+            self.increase_size(new_size as u32, root_inode, &mut self.fs.lock());
+            // write dirent
+            let dirent = DirEntry::new(new_name, self.find_inode_id(old_name, root_inode).unwrap());
+            root_inode.write_at(
+                file_count * DIRENT_SZ,
+                dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+        block_cache_sync_all();
+    }
+
+    /// 删除一个硬连接
+    pub fn delete_hard_link(&self, name: &str){
+        let inode = self.find(name).unwrap();
+        get_block_cache(inode.block_id as usize, Arc::clone(&inode.block_device))
+            .lock()
+            .modify(inode.block_offset, |disk_inode: &mut DiskInode| {
+                disk_inode.nlink -= 1;
+                if disk_inode.nlink == 0 {
+                    let mut fs = self.fs.lock();
+                    // 释放文件的数据
+                    disk_inode.clear_size(&inode.block_device).iter().for_each(|block_id|{
+                        fs.dealloc_data(*block_id);
+                    });
+                    self.modify_disk_inode(|root_inode| {
+                        let inode_id = self.find_inode_id(name, root_inode).unwrap() as usize;
+                        fs.inode_bitmap.dealloc(&self.block_device, inode_id);
+                        let mut dirent = DirEntry::empty();
+                        let file_count = (root_inode.size as usize) / DIRENT_SZ;
+                        for i in 0..file_count {
+                            root_inode.read_at(i * DIRENT_SZ, dirent.as_bytes_mut(), &self.block_device);
+                            if dirent.name() == name {
+                                root_inode.write_at(
+                                    i * DIRENT_SZ,
+                                    DirEntry::empty().as_bytes(),
+                                    &self.block_device,
+                                );
+                            }
+                        };
+                        
+                    });  
+                    
+                }
+            });      
     }
 }
