@@ -1,7 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
@@ -71,6 +71,18 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// 该进程当前已经运行的“长度”
+    pub stride: usize,
+
+    /// 进程优先级
+    pub priority: usize,
+
+    /// 各系统调用的使用次数
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    /// 应用程序开始执行的时间
+    pub start_time: usize
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +147,10 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,
+                    priority: 16,
+                    start_time: 0,
+                    syscall_times:[0; MAX_SYSCALL_NUM],
                 })
             },
         };
@@ -216,6 +232,10 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: 0,
+                    priority: 16,
+                    start_time: 0,
+                    syscall_times:[0; MAX_SYSCALL_NUM],
                 })
             },
         });
@@ -261,6 +281,15 @@ impl TaskControlBlock {
             None
         }
     }
+
+    /// 创建一个新进程
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let mut parent_inner = self.inner_exclusive_access();
+        let new = Arc::new(TaskControlBlock::new(elf_data));
+        new.inner_exclusive_access().parent = Some(Arc::downgrade(self));
+        parent_inner.children.push(new.clone());
+        new
+    } 
 }
 
 #[derive(Copy, Clone, PartialEq)]

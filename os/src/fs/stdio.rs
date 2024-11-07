@@ -39,6 +39,10 @@ impl File for Stdin {
     fn write(&self, _user_buf: UserBuffer) -> usize {
         panic!("Cannot write to stdin!");
     }
+    ///get_block_id
+    fn get_block_id(&self)->usize{0}
+    ///get_nlink
+    fn get_nlink(&self)->usize{0}
 }
 
 impl File for Stdout {
@@ -57,4 +61,9 @@ impl File for Stdout {
         }
         user_buf.len()
     }
+    ///get_block_id
+    fn get_block_id(&self)->usize{0}
+    ///get_nlink
+    fn get_nlink(&self)->usize{0}
+
 }
