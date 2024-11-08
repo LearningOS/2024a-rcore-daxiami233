@@ -49,6 +49,10 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    pub dead_lock_detect: bool,
+    pub available: [isize; 100],
+    pub allocation: [[usize; 100]; 100],
+    pub need: [[usize; 100]; 100],
 }
 
 impl ProcessControlBlockInner {
@@ -81,6 +85,48 @@ impl ProcessControlBlockInner {
     /// get a task with tid in this process
     pub fn get_task(&self, tid: usize) -> Arc<TaskControlBlock> {
         self.tasks[tid].as_ref().unwrap().clone()
+    }
+    /// 死锁检测
+    pub fn dead_lock_detect(&self) -> bool {
+        let mut work = self.available;
+        let task_num = self.tasks.len();
+        let mut finish = vec![false; task_num];
+        for _ in 0..task_num {
+            if let Some(i) = self.find(&work, &finish, task_num) {
+                for j in 0..100 {
+                    work[j] += self.allocation[i][j] as isize;
+                    finish[i] = true;
+                }
+            } else {
+                break;
+            }
+        }
+        if finish.iter().find(|i| **i == false).is_none(){
+            false
+        } else {
+            true
+        }
+    }
+    /// 从线程集合中找到一个能满足条件的线程
+    fn find(&self, work: &[isize; 100], finish: &Vec<bool>, task_num: usize)->Option<usize>{
+        for i in 0..task_num {
+            if finish[i] == true {
+                continue;
+            }
+            let mut flag = true;
+            for j in 0..100 {
+                if self.need[i][j] != 0 {
+                    if self.need[i][j] as isize > work[j] {
+                        flag = false;
+                        break;
+                    }
+                }
+            }
+            if flag == true {
+                return Some(i);
+            }
+        }
+        None
     }
 }
 
@@ -119,6 +165,10 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    dead_lock_detect:false,
+                    available: [0; 100],
+                    allocation: [[0; 100]; 100],
+                    need: [[0; 100]; 100],
                 })
             },
         });
@@ -245,6 +295,10 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    dead_lock_detect: false,
+                    available: [0; 100],
+                    allocation: [[0; 100]; 100],
+                    need: [[0; 100]; 100],
                 })
             },
         });

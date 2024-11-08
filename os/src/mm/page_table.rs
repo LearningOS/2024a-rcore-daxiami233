@@ -274,3 +274,12 @@ impl Iterator for UserBufferIterator {
         }
     }
 }
+/// 将虚拟地址手动转换成物理地址
+pub fn translated_vaddr(token: usize, vaddr: usize)->usize{
+    let page_table = PageTable::from_token(token);
+    let vpn = VirtAddr::from(vaddr).floor();
+    let ppn = page_table.translate(vpn)
+        .unwrap()
+        .ppn();
+    ppn.0 << 12usize | VirtAddr::from(vaddr).page_offset()
+}
